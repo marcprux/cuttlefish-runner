@@ -1,0 +1,109 @@
+name: Cuttlefish Runner
+description: Boot an Android Cuttlefish virtual device and run a script against it
+branding:
+  icon: smartphone
+  color: green
+
+inputs:
+  script:
+    description: Commands to run once the device has booted. ANDROID_SERIAL points at the device.
+    required: true
+  working-directory:
+    description: Directory to run the script in
+    default: .
+  branch:
+    description: Android CI branch to take the Cuttlefish build from
+    default: aosp-android-latest-release
+  target:
+    description: Build target, e.g. aosp_cf_x86_64_only_phone-userdebug. Defaults to the phone target matching the host architecture.
+    default: ''
+  build-id:
+    description: Android CI build ID, or "latest" for the last known good build of the target
+    default: latest
+  cpus:
+    description: Number of virtual CPUs. Defaults to the Cuttlefish default.
+    default: ''
+  memory-mb:
+    description: Guest memory in megabytes. Defaults to the Cuttlefish default.
+    default: ''
+  boot-timeout:
+    description: Seconds to wait for the device to boot
+    default: '900'
+  disable-animations:
+    description: Turn off window and transition animations after boot
+    default: 'true'
+  launch-args:
+    description: Extra arguments passed to launch_cvd
+    default: ''
+  cache:
+    description: Cache the downloaded host tools and device images between runs
+    default: 'true'
+
+outputs:
+  serial:
+    description: adb serial of the device
+    value: ${{ steps.resolve.outputs.serial }}
+  build-id:
+    description: Android CI build ID that was booted
+    value: ${{ steps.resolve.outputs.build-id }}
+  target:
+    description: Build target that was booted
+    value: ${{ steps.resolve.outputs.target }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Cuttlefish build
+      id: resolve
+      shell: bash
+      env:
+        INPUT_BRANCH: ${{ inputs.branch }}
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_BUILD_ID: ${{ inputs.build-id }}
+      run: '"$GITHUB_ACTION_PATH/scripts/resolve.sh"'
+
+    - name: Cache Cuttlefish downloads
+      if: inputs.cache == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.resolve.outputs.downloads }}
+        key: cuttlefish-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.target }}-${{ steps.resolve.outputs.build-id }}
+
+    - name: Set up Cuttlefish
+      shell: bash
+      env:
+        CF_BRANCH: ${{ steps.resolve.outputs.branch }}
+        CF_TARGET: ${{ steps.resolve.outputs.target }}
+        CF_BUILD_ID: ${{ steps.resolve.outputs.build-id }}
+        CF_PRODUCT: ${{ steps.resolve.outputs.product }}
+      run: '"$GITHUB_ACTION_PATH/scripts/setup-${{ steps.resolve.outputs.os }}.sh"'
+
+    - name: Launch Cuttlefish
+      shell: bash
+      env:
+        CF_CPUS: ${{ inputs.cpus }}
+        CF_MEMORY_MB: ${{ inputs.memory-mb }}
+        CF_BOOT_TIMEOUT: ${{ inputs.boot-timeout }}
+        CF_DISABLE_ANIMATIONS: ${{ inputs.disable-animations }}
+        CF_LAUNCH_ARGS: ${{ inputs.launch-args }}
+      run: '"$GITHUB_ACTION_PATH/scripts/launch.sh"'
+
+    - name: Run script
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ANDROID_SERIAL: ${{ steps.resolve.outputs.serial }}
+        CF_SCRIPT: ${{ inputs.script }}
+      run: |
+        printf '%s\n' "$CF_SCRIPT" > "$RUNNER_TEMP/cuttlefish-script.sh"
+        bash -eo pipefail "$RUNNER_TEMP/cuttlefish-script.sh"
+
+    - name: Show Cuttlefish logs
+      if: failure()
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/stop.sh" --logs'
+
+    - name: Stop Cuttlefish
+      if: always()
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/stop.sh"'
