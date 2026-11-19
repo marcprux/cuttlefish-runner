@@ -9,7 +9,6 @@ args=(
   --daemon
   --report_anonymous_usage_stats=n
   --run_adb_connector=false
-  --boot_timeout_secs="$timeout"
 )
 [ -n "${CF_CPUS:-}" ] && args+=(--cpus="$CF_CPUS")
 [ -n "${CF_MEMORY_MB:-}" ] && args+=(--memory_mb="$CF_MEMORY_MB")
@@ -25,15 +24,21 @@ log "launch_cvd ${args[*]}"
 cd "$CF_HOME"
 if [ "$os" = linux ]; then
   # The group memberships added during setup only apply to new sessions.
-  sudo -u "$USER" env HOME="$CF_HOME" PATH="$PATH" "$CF_HOME/bin/launch_cvd" "${args[@]}" < /dev/null
+  sudo -u "$USER" env HOME="$CF_HOME" PATH="$PATH" "$CF_HOME/bin/launch_cvd" "${args[@]}" < /dev/null &
 else
-  HOME="$CF_HOME" "$CF_HOME/bin/launch_cvd" "${args[@]}" < /dev/null
+  HOME="$CF_HOME" "$CF_HOME/bin/launch_cvd" "${args[@]}" < /dev/null &
 fi
+launcher=$!
+deadline=$((SECONDS + timeout))
+while kill -0 "$launcher" 2> /dev/null; do
+  [ "$SECONDS" -lt "$deadline" ] || die "launch_cvd did not report a booted device within ${timeout}s"
+  sleep 2
+done
+wait "$launcher" || die "launch_cvd failed"
 endgroup
 
 group "Wait for device"
 adb start-server
-deadline=$((SECONDS + timeout))
 until [ "$(adb -s "$CF_SERIAL" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; do
   [ "$SECONDS" -lt "$deadline" ] || die "device did not finish booting within ${timeout}s"
   adb connect "$CF_SERIAL" > /dev/null 2>&1 || true
