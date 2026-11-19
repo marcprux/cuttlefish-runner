@@ -1,0 +1,28 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: |
+          uname -a
+          df -h
+          if [ "$(uname)" = Darwin ]; then
+            sw_vers
+            sysctl kern.hv_support hw.ncpu hw.memsize machdep.cpu.brand_string || true
+            sysctl -a | grep -i 'hv_\|nested' || true
+            xcode-select -p; xcodebuild -version
+            ls /Applications | grep -i xcode
+            arch -x86_64 uname -m || true
+            which qemu-system-aarch64 adb brew || true
+            echo "$ANDROID_HOME"; ls "$ANDROID_HOME" || true
+          else
+            ls -l /dev/kvm || true
+            nproc; free -g
+            id
+            echo "$ANDROID_HOME"; ls "$ANDROID_HOME" || true
+          fi
