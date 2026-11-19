@@ -7,8 +7,16 @@ if [ "${1:-}" = --logs ]; then
   for name in launcher.log kernel.log logcat; do
     file="$instance/logs/$name"
     [ -f "$file" ] || continue
-    group "$name (last 300 lines)"
-    tail -n 300 "$file" || true
+    group "$name"
+    # Connection retries can fill the log, so drop them before trimming.
+    grep -av 'Failed to connect:' "$file" > "$file.trimmed" || true
+    if [ "$(wc -l < "$file.trimmed")" -gt 500 ]; then
+      head -n 200 "$file.trimmed"
+      echo "[...]"
+      tail -n 300 "$file.trimmed"
+    else
+      cat "$file.trimmed"
+    fi
     endgroup
   done
 fi

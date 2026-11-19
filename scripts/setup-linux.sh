@@ -40,6 +40,8 @@ sudo usermod -aG kvm,cvdnetwork,render "$USER"
 sudo modprobe -a vhost_vsock vhost_net
 sudo systemctl restart cuttlefish-host-resources
 ip -brief link show | grep cvd || die "Cuttlefish network interfaces were not created"
+ls -l /dev/kvm /dev/vhost-vsock /dev/vhost-net
+sudo -u "$USER" id
 endgroup
 
 group "Fetch Cuttlefish host tools and images"
