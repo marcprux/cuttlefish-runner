@@ -94,18 +94,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Free disk space
-        run: host-tools/free-disk-space.sh
-
       - name: Create case-sensitive volume
         run: |
           # AOSP has file names that differ only in case. A volume in the boot
           # container shares its free space, unlike a disk image.
           container="$(diskutil info / | awk '/APFS Container:/ { print $NF }')"
-          sudo diskutil apfs addVolume "$container" 'Case-sensitive APFS' aosp -mountpoint /Volumes/aosp
+          sudo diskutil apfs addVolume "$container" 'Case-sensitive APFS' aosp
+          mount | grep /Volumes/aosp
           sudo chown "$USER" /Volumes/aosp
           df -h /Volumes/aosp
           mkdir -p "$AOSP"
+
+      - name: Free disk space
+        run: host-tools/free-disk-space.sh
 
       - name: Fetch patches
         run: |
