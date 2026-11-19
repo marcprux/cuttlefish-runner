@@ -99,9 +99,12 @@ jobs:
 
       - name: Create case-sensitive volume
         run: |
-          hdiutil create -quiet -type SPARSEBUNDLE -fs 'Case-sensitive APFS' -size 300g \
-            -volname aosp "$HOME/aosp.sparsebundle"
-          hdiutil attach -quiet -nobrowse "$HOME/aosp.sparsebundle" -mountpoint /Volumes/aosp
+          # AOSP has file names that differ only in case. A volume in the boot
+          # container shares its free space, unlike a disk image.
+          container="$(diskutil info / | awk '/APFS Container:/ { print $NF }')"
+          sudo diskutil apfs addVolume "$container" 'Case-sensitive APFS' aosp -mountpoint /Volumes/aosp
+          sudo chown "$USER" /Volumes/aosp
+          df -h /Volumes/aosp
           mkdir -p "$AOSP"
 
       - name: Fetch patches
@@ -122,10 +125,11 @@ jobs:
           git config --global color.ui false
           cd "$AOSP"
           "$HOME/bin/repo" init -q -u "$HOME/cuttlefish-wearables" -b main -m minimal.xml --depth=1 < /dev/null
-          for attempt in 1 2 3; do
-            "$HOME/bin/repo" sync -c -j8 --no-tags --no-clone-bundle -q && break
-            [ "$attempt" -lt 3 ] || exit 1
-            sleep 30
+          for attempt in 1 2 3 4 5; do
+            "$HOME/bin/repo" sync -c -j6 --no-tags --no-clone-bundle -q && break
+            [ "$attempt" -lt 5 ] || exit 1
+            df -h /Volumes/aosp
+            sleep 60
           done
           df -h /Volumes/aosp
 
