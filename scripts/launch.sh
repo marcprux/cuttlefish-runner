@@ -42,6 +42,18 @@ wait "$launcher" || die "launch_cvd failed"
 endgroup
 
 group "Wait for device"
+if ! command -v adb > /dev/null; then
+  # Fall back to the SDK's platform-tools, then to the adb shipped with the
+  # host tools, and expose it to the following steps as well.
+  for dir in "${ANDROID_HOME:-}/platform-tools" "${ANDROID_SDK_ROOT:-}/platform-tools" "$CF_HOME/bin"; do
+    if [ -x "$dir/adb" ]; then
+      export PATH="$dir:$PATH"
+      echo "$dir" >> "$GITHUB_PATH"
+      break
+    fi
+  done
+  command -v adb > /dev/null || die "adb was not found"
+fi
 adb start-server
 until [ "$(adb -s "$CF_SERIAL" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; do
   [ "$SECONDS" -lt "$deadline" ] || die "device did not finish booting within ${timeout}s"
