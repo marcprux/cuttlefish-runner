@@ -45,9 +45,11 @@ jobs:
 
       - name: Check test results
         run: |
-          results=$(find example/app/build/outputs/androidTest-results -name 'TEST-*.xml')
-          test -n "$results"
-          echo "$results" | xargs grep -h '<testsuite ' | tee /dev/stderr | grep -q 'tests="3" failures="0" errors="0"'
+          suites=$(find example/app/build/outputs/androidTest-results -name 'TEST-*.xml' -exec grep -h '<testsuite ' {} +)
+          echo "$suites"
+          for expected in 'tests="3"' 'failures="0"' 'errors="0"'; do
+            echo "$suites" | grep -q "$expected"
+          done
           echo "booted ${{ steps.cuttlefish.outputs.target }} build ${{ steps.cuttlefish.outputs.build-id }}"
 
       - uses: actions/upload-artifact@v7
