@@ -35,6 +35,12 @@ inputs:
   launch-args:
     description: Extra arguments passed to launch_cvd
     default: ''
+  host-tools-repository:
+    description: Repository whose releases provide the macOS host tools
+    default: marcprux/cuttlefish-runner
+  host-tools-release:
+    description: Release tag of the macOS host tools
+    default: host-tools-1
   cache:
     description: Cache the downloaded host tools and device images between runs
     default: 'true'
@@ -67,7 +73,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.resolve.outputs.downloads }}
-        key: cuttlefish-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.target }}-${{ steps.resolve.outputs.build-id }}
+        key: cuttlefish-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.target }}-${{ steps.resolve.outputs.build-id }}${{ steps.resolve.outputs.os == 'macos' && format('-{0}', inputs.host-tools-release) || '' }}
 
     - name: Set up Cuttlefish
       shell: bash
@@ -76,6 +82,8 @@ runs:
         CF_TARGET: ${{ steps.resolve.outputs.target }}
         CF_BUILD_ID: ${{ steps.resolve.outputs.build-id }}
         CF_PRODUCT: ${{ steps.resolve.outputs.product }}
+        CF_HOST_TOOLS_REPOSITORY: ${{ inputs.host-tools-repository }}
+        CF_HOST_TOOLS_RELEASE: ${{ inputs.host-tools-release }}
       run: '"$GITHUB_ACTION_PATH/scripts/setup-${{ steps.resolve.outputs.os }}.sh"'
 
     - name: Launch Cuttlefish
