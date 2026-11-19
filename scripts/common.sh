@@ -3,9 +3,9 @@ set -euo pipefail
 
 CF_ROOT="${CF_ROOT:-$HOME/.cuttlefish-runner}"
 CF_DOWNLOADS="$CF_ROOT/downloads"
-CF_HOST="$CF_ROOT/host"
-CF_IMAGES="$CF_ROOT/images"
-CF_RUN="$CF_ROOT/run"
+# Host tools and device images are unpacked side by side into one directory,
+# which also serves as HOME for the Cuttlefish tools.
+CF_HOME="$CF_ROOT/cvd"
 CF_QEMU="$CF_ROOT/qemu"
 CF_ADB_PORT="${CF_ADB_PORT:-6520}"
 CF_SERIAL="127.0.0.1:$CF_ADB_PORT"

@@ -7,7 +7,6 @@ os="$(host_os)"
 timeout="${CF_BOOT_TIMEOUT:-900}"
 args=(
   --daemon
-  --system_image_dir="$CF_IMAGES"
   --report_anonymous_usage_stats=n
   --run_adb_connector=false
   --boot_timeout_secs="$timeout"
@@ -23,12 +22,12 @@ fi
 
 group "Launch Cuttlefish"
 log "launch_cvd ${args[*]}"
-cd "$CF_RUN"
+cd "$CF_HOME"
 if [ "$os" = linux ]; then
   # The group memberships added during setup only apply to new sessions.
-  sudo -u "$USER" env HOME="$CF_RUN" PATH="$PATH" "$CF_HOST/bin/launch_cvd" "${args[@]}" < /dev/null
+  sudo -u "$USER" env HOME="$CF_HOME" PATH="$PATH" "$CF_HOME/bin/launch_cvd" "${args[@]}" < /dev/null
 else
-  HOME="$CF_RUN" "$CF_HOST/bin/launch_cvd" "${args[@]}" < /dev/null
+  HOME="$CF_HOME" "$CF_HOME/bin/launch_cvd" "${args[@]}" < /dev/null
 fi
 endgroup
 

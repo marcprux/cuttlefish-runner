@@ -30,11 +30,12 @@ Architecture: all
 Maintainer: cuttlefish-runner
 Description: Empty package satisfying the cuttlefish-base dependency
 CONTROL
-  dpkg-deb --build "$shim/libxml2" "$shim/libxml2.deb" > /dev/null
+  dpkg-deb --root-owner-group --build "$shim/libxml2" "$shim/libxml2.deb" > /dev/null
   sudo dpkg -i "$shim/libxml2.deb" > /dev/null
   rm -rf "$shim"
 fi
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends cuttlefish-base
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+  -o Dpkg::Use-Pty=0 cuttlefish-base > /dev/null
 sudo usermod -aG kvm,cvdnetwork,render "$USER"
 sudo modprobe -a vhost_vsock vhost_net
 sudo systemctl restart cuttlefish-host-resources
@@ -47,9 +48,9 @@ img_zip="$CF_PRODUCT-img-$CF_BUILD_ID.zip"
 fetch_artifact "$CF_BRANCH" "$CF_TARGET" "$CF_BUILD_ID" cvd-host_package.tar.gz "$dl/cvd-host_package.tar.gz"
 fetch_artifact "$CF_BRANCH" "$CF_TARGET" "$CF_BUILD_ID" "$img_zip" "$dl/$img_zip"
 
-rm -rf "$CF_HOST" "$CF_IMAGES" "$CF_RUN"
-mkdir -p "$CF_HOST" "$CF_IMAGES" "$CF_RUN"
-tar -xzf "$dl/cvd-host_package.tar.gz" -C "$CF_HOST"
-unzip -q "$dl/$img_zip" -d "$CF_IMAGES"
+rm -rf "$CF_HOME"
+mkdir -p "$CF_HOME"
+tar -xzf "$dl/cvd-host_package.tar.gz" -C "$CF_HOME"
+unzip -q "$dl/$img_zip" -d "$CF_HOME"
 df -h "$CF_ROOT"
 endgroup
