@@ -1,0 +1,201 @@
+# Builds the macOS host side of Cuttlefish and publishes it as a release:
+#  - QEMU from facebookincubator/qemu-wearables
+#  - cvd-host_package from AOSP with the facebookincubator/cuttlefish-wearables patches
+# The action downloads these release assets on macOS runners.
+name: build-host-tools
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish the assets under
+        required: true
+        default: host-tools-1
+      cuttlefish-wearables-ref:
+        description: Commit of facebookincubator/cuttlefish-wearables
+        default: 1dd3aa239e02cce10d79d80d68823181a64ce078
+      qemu-wearables-ref:
+        description: Commit of facebookincubator/qemu-wearables
+        default: 5bcef396b9e1fed3da3f7c296dd3853ea1e0dc8a
+      build-qemu:
+        description: Build QEMU
+        type: boolean
+        default: true
+      build-cvd:
+        description: Build the cvd host package
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  qemu:
+    if: inputs.build-qemu
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: brew install glib pixman libslirp dtc ninja meson pkgconf
+
+      - name: Fetch QEMU
+        run: |
+          git init -q qemu-src
+          cd qemu-src
+          git remote add origin https://github.com/facebookincubator/qemu-wearables.git
+          git fetch -q --depth 1 origin "${{ inputs.qemu-wearables-ref }}"
+          git checkout -q FETCH_HEAD
+
+      - name: Build QEMU
+        run: |
+          mkdir qemu-src/build
+          cd qemu-src/build
+          ../configure --target-list=aarch64-softmmu --prefix="$GITHUB_WORKSPACE/qemu" \
+            --enable-slirp --enable-cocoa --enable-hvf --enable-tcg --enable-tools \
+            --disable-docs --disable-werror --disable-guest-agent --disable-gnutls \
+            --disable-nettle --disable-gcrypt --disable-sdl --disable-gtk --disable-curses \
+            --disable-vnc-sasl --disable-vnc-jpeg --disable-png --disable-libusb \
+            --disable-usb-redir --disable-capstone --disable-libssh --disable-curl \
+            --disable-zstd --disable-lzo --disable-snappy --disable-bzip2 \
+            --disable-libiscsi --disable-libnfs --disable-rbd --disable-glusterfs \
+            --disable-smartcard --disable-spice --disable-opengl --disable-virglrenderer \
+            --disable-brlapi --disable-vde --disable-jack
+          ninja
+          ninja install
+
+      - name: Package QEMU
+        run: |
+          rm -f qemu/bin/qemu-system-aarch64-unsigned
+          rm -rf qemu/include qemu/lib qemu/libexec qemu/share/applications qemu/share/icons
+          find qemu/share/qemu -maxdepth 1 -type f -size +1000k ! -name '*aarch64*' ! -name '*arm*' -delete
+          build/bundle-dylibs.sh "$PWD/qemu" qemu-src/accel/hvf/entitlements.plist
+          qemu/bin/qemu-system-aarch64 --version
+          qemu/bin/qemu-system-aarch64 -accel help
+          qemu/bin/qemu-img --version
+          echo "${{ inputs.qemu-wearables-ref }}" > qemu/SOURCE_COMMIT
+          cp qemu-src/COPYING qemu-src/LICENSE qemu/
+          tar -czf qemu-darwin-arm64.tar.gz qemu
+          ls -lh qemu-darwin-arm64.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qemu-darwin-arm64
+          path: qemu-darwin-arm64.tar.gz
+          compression-level: 0
+
+  cvd:
+    if: inputs.build-cvd
+    runs-on: macos-latest
+    timeout-minutes: 360
+    env:
+      AOSP: /Volumes/aosp/src
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free disk space
+        run: build/free-disk-space.sh
+
+      - name: Create case-sensitive volume
+        run: |
+          hdiutil create -quiet -type SPARSEBUNDLE -fs 'Case-sensitive APFS' -size 300g \
+            -volname aosp "$HOME/aosp.sparsebundle"
+          hdiutil attach -quiet -nobrowse "$HOME/aosp.sparsebundle" -mountpoint /Volumes/aosp
+          mkdir -p "$AOSP"
+
+      - name: Fetch patches
+        run: |
+          git init -q -b main "$HOME/cuttlefish-wearables"
+          cd "$HOME/cuttlefish-wearables"
+          git remote add origin https://github.com/facebookincubator/cuttlefish-wearables.git
+          git fetch -q --depth 1 origin "${{ inputs.cuttlefish-wearables-ref }}"
+          git reset -q --hard FETCH_HEAD
+
+      - name: Sync AOSP
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          git config --global user.name "cuttlefish-runner"
+          git config --global user.email "cuttlefish-runner@users.noreply.github.com"
+          git config --global color.ui false
+          cd "$AOSP"
+          "$HOME/bin/repo" init -q -u "$HOME/cuttlefish-wearables" -b main -m minimal.xml --depth=1 < /dev/null
+          for attempt in 1 2 3; do
+            "$HOME/bin/repo" sync -c -j8 --no-tags --no-clone-bundle -q && break
+            [ "$attempt" -lt 3 ] || exit 1
+            sleep 30
+          done
+          df -h /Volumes/aosp
+
+      - name: Apply patches
+        run: |
+          "$HOME/cuttlefish-wearables/apply.sh" "$AOSP" | grep -v '^Applying: '
+          df -h /Volumes/aosp
+
+      - name: Build cvd host package
+        run: |
+          xcodebuild -version
+          ls -l /var/select/developer_dir
+          (while sleep 600; do
+            echo "::notice::$(date +%H:%M) disk: $(df -h /Volumes/aosp | awk 'END { print $4 }') free, load: $(sysctl -n vm.loadavg), swap: $(sysctl -n vm.swapusage)"
+          done) &
+          monitor=$!
+          status=0
+          env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb LANG=en_US.UTF-8 \
+            build/build-cvd-host-package.sh "$AOSP" || status=$?
+          kill "$monitor"
+          exit "$status"
+
+      - name: Package
+        run: |
+          cp "$AOSP/out/host/darwin-x86/cvd-host_package.tar.gz" cvd-host_package-darwin.tar.gz
+          ls -lh cvd-host_package-darwin.tar.gz
+          tar -tzf cvd-host_package-darwin.tar.gz | head -50
+          tar -xzf cvd-host_package-darwin.tar.gz bin/launch_cvd bin/run_cvd && file bin/launch_cvd bin/run_cvd
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cvd-host_package-darwin
+          path: cvd-host_package-darwin.tar.gz
+          compression-level: 0
+
+      - name: Collect build logs
+        if: failure()
+        run: |
+          mkdir -p logs
+          cp "$AOSP"/out/error.log "$AOSP"/out/soong.log "$AOSP"/out/verbose.log.gz logs/ 2> /dev/null || true
+          tail -n 200 "$AOSP/out/error.log" 2> /dev/null || true
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: build-logs
+          path: logs
+          if-no-files-found: ignore
+
+  release:
+    needs: [qemu, cvd]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          ls -lh
+          shasum -a 256 *.tar.gz | tee SHA256SUMS
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes "macOS host tools for Cuttlefish.
+
+          - QEMU: facebookincubator/qemu-wearables@${{ inputs.qemu-wearables-ref }}
+          - cvd host package: AOSP android-16.0.0_r1 with facebookincubator/cuttlefish-wearables@${{ inputs.cuttlefish-wearables-ref }}"
+          fi
+          gh release upload "$TAG" *.tar.gz --clobber
