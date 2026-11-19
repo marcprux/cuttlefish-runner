@@ -70,7 +70,7 @@ jobs:
           rm -f qemu/bin/qemu-system-aarch64-unsigned
           rm -rf qemu/include qemu/lib qemu/libexec qemu/share/applications qemu/share/icons
           find qemu/share/qemu -maxdepth 1 -type f -size +1000k ! -name '*aarch64*' ! -name '*arm*' -delete
-          build/bundle-dylibs.sh "$PWD/qemu" qemu-src/accel/hvf/entitlements.plist
+          host-tools/bundle-dylibs.sh "$PWD/qemu" qemu-src/accel/hvf/entitlements.plist
           qemu/bin/qemu-system-aarch64 --version
           qemu/bin/qemu-system-aarch64 -accel help
           qemu/bin/qemu-img --version
@@ -95,7 +95,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Free disk space
-        run: build/free-disk-space.sh
+        run: host-tools/free-disk-space.sh
 
       - name: Create case-sensitive volume
         run: |
@@ -144,7 +144,7 @@ jobs:
           monitor=$!
           status=0
           env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb LANG=en_US.UTF-8 \
-            build/build-cvd-host-package.sh "$AOSP" || status=$?
+            host-tools/build-cvd-host-package.sh "$AOSP" || status=$?
           kill "$monitor"
           exit "$status"
 

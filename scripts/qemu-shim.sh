@@ -7,7 +7,7 @@
 # software emulation. The display and audio devices are always made headless.
 set -euo pipefail
 
-real="${CF_QEMU_REAL:-$(cd "$(dirname "$0")" && pwd)/../qemu/bin/qemu-system-aarch64}"
+real="$(cd "$(dirname "$0")/../qemu/bin" && pwd)/qemu-system-aarch64"
 
 hvf=0
 if [ "${CF_FORCE_TCG:-}" != 1 ] && [ "$(sysctl -n kern.hv_support 2> /dev/null || echo 0)" = 1 ]; then

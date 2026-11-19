@@ -7,6 +7,7 @@ CF_DOWNLOADS="$CF_ROOT/downloads"
 # which also serves as HOME for the Cuttlefish tools.
 CF_HOME="$CF_ROOT/cvd"
 CF_QEMU="$CF_ROOT/qemu"
+CF_QEMU_SHIM="$CF_ROOT/qemu-shim"
 CF_ADB_PORT="${CF_ADB_PORT:-6520}"
 CF_SERIAL="127.0.0.1:$CF_ADB_PORT"
 CI_ANDROID="https://ci.android.com/builds"
