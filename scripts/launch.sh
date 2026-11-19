@@ -30,8 +30,12 @@ else
 fi
 launcher=$!
 deadline=$((SECONDS + timeout))
+launcher_log="$CF_HOME/cuttlefish/instances/cvd-1/logs/launcher.log"
 while kill -0 "$launcher" 2> /dev/null; do
   [ "$SECONDS" -lt "$deadline" ] || die "launch_cvd did not report a booted device within ${timeout}s"
+  if grep -aqs 'Stopping all monitored processes due to unexpected exit' "$launcher_log"; then
+    die "a Cuttlefish host process exited unexpectedly"
+  fi
   sleep 2
 done
 wait "$launcher" || die "launch_cvd failed"
