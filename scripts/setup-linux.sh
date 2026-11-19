@@ -40,8 +40,11 @@ sudo usermod -aG kvm,cvdnetwork,render "$USER"
 sudo modprobe -a vhost_vsock vhost_net
 sudo systemctl restart cuttlefish-host-resources
 ip -brief link show | grep cvd || die "Cuttlefish network interfaces were not created"
-ls -l /dev/kvm /dev/vhost-vsock /dev/vhost-net
-sudo -u "$USER" id
+# crosvm sandboxes its devices in user namespaces, which AppArmor denies to
+# unprivileged processes by default on Ubuntu 24.04 and later.
+if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+  sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+fi
 endgroup
 
 group "Fetch Cuttlefish host tools and images"
