@@ -25,6 +25,12 @@ on:
         description: Build the cvd host package
         type: boolean
         default: true
+      cvd-runner:
+        description: Runner that builds the cvd host package
+        default: macos-15-intel
+      cvd-jobs:
+        description: Parallel build jobs for the cvd host package
+        default: '4'
 
 permissions:
   contents: write
@@ -87,7 +93,7 @@ jobs:
 
   cvd:
     if: inputs.build-cvd
-    runs-on: macos-latest
+    runs-on: ${{ inputs.cvd-runner }}
     timeout-minutes: 360
     env:
       AOSP: /Volumes/aosp/src
@@ -140,16 +146,36 @@ jobs:
           df -h /Volumes/aosp
 
       - name: Build cvd host package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JOBS: ${{ inputs.cvd-jobs }}
         run: |
           xcodebuild -version
           ls -l /var/select/developer_dir
-          (while sleep 600; do
-            echo "::notice::$(date +%H:%M) disk: $(df -h /Volumes/aosp | awk 'END { print $4 }') free, load: $(sysctl -n vm.loadavg), swap: $(sysctl -n vm.swapusage)"
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          # The job log is lost if the runner runs out of memory and drops
+          # its connection, so a progress report is also kept as an asset of
+          # the build-logs release.
+          log="$RUNNER_TEMP/build.log"
+          report="$RUNNER_TEMP/progress-$GITHUB_RUN_ID.txt"
+          gh release view build-logs > /dev/null 2>&1 ||
+            gh release create build-logs --prerelease --title build-logs \
+              --notes "Progress reports of build-host-tools runs." || true
+          (while sleep 300; do
+            {
+              date -u
+              df -h /Volumes/aosp | tail -n 1
+              sysctl -n vm.loadavg vm.swapusage
+              ps -Ao rss,comm -m | head -n 8
+              tail -n 150 "$log" | cut -c 1-400
+            } > "$report" 2>&1
+            gh release upload build-logs "$report" --clobber > /dev/null 2>&1 || true
           done) &
           monitor=$!
-          status=0
           env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb LANG=en_US.UTF-8 \
-            host-tools/build-cvd-host-package.sh "$AOSP" || status=$?
+            host-tools/build-cvd-host-package.sh "$AOSP" "$JOBS" 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
           kill "$monitor"
           exit "$status"
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the macOS Cuttlefish host package from an AOSP checkout that has the
 # cuttlefish-wearables patch series applied.
-# Usage: build-cvd-host-package.sh AOSP_ROOT
+# Usage: build-cvd-host-package.sh AOSP_ROOT [JOBS]
 
 # envsetup.sh does not work under "set -u" or "set -e".
 cd "$1" || exit 1
@@ -9,4 +9,4 @@ ulimit -n 65536 2> /dev/null || ulimit -n 10240
 # shellcheck source=/dev/null
 source build/envsetup.sh || exit 1
 lunch aosp_cf_arm64_phone-bp2a-userdebug || exit 1
-m out/host/darwin-x86/cvd-host_package.tar.gz
+m ${2:+-j"$2"} out/host/darwin-x86/cvd-host_package.tar.gz
