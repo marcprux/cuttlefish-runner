@@ -91,16 +91,45 @@ jobs:
           path: qemu-darwin-arm64.tar.gz
           compression-level: 0
 
+  # The build takes longer than the six hours a hosted job may run, so it is
+  # split into stages that run one after the other. A stage that runs out of
+  # time hands its out directory to the next one as an artifact. Stages that
+  # start after the package has been built do nothing.
   cvd:
     if: inputs.build-cvd
     runs-on: ${{ inputs.cvd-runner }}
     timeout-minutes: 360
+    strategy:
+      max-parallel: 1
+      matrix:
+        stage: [1, 2, 3, 4, 5]
     env:
       AOSP: /Volumes/aosp/src
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      STAGE: ${{ matrix.stage }}
+      LAST_STAGE: 5
     steps:
+      - name: Check earlier stages
+        id: check
+        run: |
+          echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+          names="$(gh api "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate --jq '.artifacts[].name')"
+          echo "$names"
+          if echo "$names" | grep -qx cvd-host_package-darwin; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$names" | grep -qx cvd-out; then
+            echo "resume=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.check.outputs.build == 'true'
 
       - name: Create case-sensitive volume
+        if: steps.check.outputs.build == 'true'
         run: |
           # AOSP has file names that differ only in case. A volume in the boot
           # container shares its free space, unlike a disk image.
@@ -112,9 +141,11 @@ jobs:
           mkdir -p "$AOSP"
 
       - name: Free disk space
+        if: steps.check.outputs.build == 'true'
         run: host-tools/free-disk-space.sh
 
       - name: Fetch patches
+        if: steps.check.outputs.build == 'true'
         run: |
           git init -q -b main "$HOME/cuttlefish-wearables"
           cd "$HOME/cuttlefish-wearables"
@@ -123,6 +154,7 @@ jobs:
           git reset -q --hard FETCH_HEAD
 
       - name: Sync AOSP
+        if: steps.check.outputs.build == 'true'
         run: |
           mkdir -p "$HOME/bin"
           curl -fsSL --retry 5 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
@@ -141,45 +173,69 @@ jobs:
           df -h /Volumes/aosp
 
       - name: Apply patches
+        if: steps.check.outputs.build == 'true'
         run: |
           "$HOME/cuttlefish-wearables/apply.sh" "$AOSP" | grep -v '^Applying: '
+          # Every stage checks the sources out again. Giving them the same
+          # modification times each time keeps the out directory of an
+          # earlier stage up to date.
+          cd "$AOSP"
+          find . -path ./.repo -prune -o -print0 | xargs -0 touch -h -t 202601010000
+          df -h /Volumes/aosp
+
+      - uses: actions/download-artifact@v8
+        if: steps.check.outputs.build == 'true' && steps.check.outputs.resume == 'true'
+        with:
+          name: cvd-out
+          path: /Volumes/aosp
+
+      - name: Restore out directory
+        if: steps.check.outputs.build == 'true' && steps.check.outputs.resume == 'true'
+        run: |
+          cd "$AOSP"
+          command -v zstd > /dev/null || brew install zstd
+          zstd -dc /Volumes/aosp/out.tar.zst | tar -xf -
+          rm /Volumes/aosp/out.tar.zst
+          du -sh out
           df -h /Volumes/aosp
 
       - name: Build cvd host package
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          JOBS: ${{ inputs.cvd-jobs }}
+        id: build
+        if: steps.check.outputs.build == 'true'
         run: |
           xcodebuild -version
           ls -l /var/select/developer_dir
           sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
-          # The job log is lost if the runner runs out of memory and drops
-          # its connection, so a progress report is also kept as an asset of
-          # the build-logs release.
-          log="$RUNNER_TEMP/build.log"
-          report="$RUNNER_TEMP/progress-$GITHUB_RUN_ID.txt"
-          gh release view build-logs > /dev/null 2>&1 ||
-            gh release create build-logs --prerelease --title build-logs \
-              --notes "Progress reports of build-host-tools runs." || true
-          (while sleep 300; do
-            {
-              date -u
-              df -h /Volumes/aosp | tail -n 1
-              sysctl -n vm.loadavg vm.swapusage
-              ps -Ao rss,comm -m | head -n 8
-              tail -n 150 "$log" | cut -c 1-400
-            } > "$report" 2>&1
-            gh release upload build-logs "$report" --clobber > /dev/null 2>&1 || true
-          done) &
-          monitor=$!
-          env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb LANG=en_US.UTF-8 \
-            host-tools/build-cvd-host-package.sh "$AOSP" "$JOBS" 2>&1 | tee "$log"
-          status="${PIPESTATUS[0]}"
-          kill "$monitor"
-          exit "$status"
+          status=0
+          host-tools/run-build.sh "$AOSP" "${{ inputs.cvd-jobs }}" "$((JOB_START + 280 * 60))" || status=$?
+          if [ "$status" = 75 ] && [ "$STAGE" != "$LAST_STAGE" ]; then
+            echo "result=continue" >> "$GITHUB_OUTPUT"
+          elif [ "$status" = 0 ]; then
+            echo "result=done" >> "$GITHUB_OUTPUT"
+          else
+            exit "$status"
+          fi
+
+      - name: Save out directory
+        if: steps.build.outputs.result == 'continue'
+        run: |
+          cd "$AOSP"
+          du -sh out
+          command -v zstd > /dev/null || brew install zstd
+          tar -cf - out | zstd -q -T0 -3 -o /Volumes/aosp/out.tar.zst
+          ls -lh /Volumes/aosp/out.tar.zst
+
+      - uses: actions/upload-artifact@v7
+        if: steps.build.outputs.result == 'continue'
+        with:
+          name: cvd-out
+          path: /Volumes/aosp/out.tar.zst
+          compression-level: 0
+          overwrite: true
+          retention-days: 2
 
       - name: Package
+        if: steps.build.outputs.result == 'done'
         run: |
           cp "$AOSP/out/host/darwin-x86/cvd-host_package.tar.gz" cvd-host_package-darwin.tar.gz
           ls -lh cvd-host_package-darwin.tar.gz
@@ -187,6 +243,7 @@ jobs:
           tar -xzf cvd-host_package-darwin.tar.gz bin/launch_cvd bin/run_cvd && file bin/launch_cvd bin/run_cvd
 
       - uses: actions/upload-artifact@v7
+        if: steps.build.outputs.result == 'done'
         with:
           name: cvd-host_package-darwin
           path: cvd-host_package-darwin.tar.gz
@@ -202,7 +259,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: build-logs
+          name: build-logs-${{ matrix.stage }}
           path: logs
           if-no-files-found: ignore
 
